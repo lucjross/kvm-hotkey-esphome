@@ -1,0 +1,124 @@
+# Generic "ScrLk ScrLk" KVM -- the one this project was built against.
+#
+# The ScrLk ScrLk prefix is common on unbranded KVMs, but the commands after
+# it vary by model, so check them against your manual. Every hotkey here is
+# two taps of Scroll Lock followed by a command, all pressed one after another
+# (nothing held):
+#
+#   ScrLk ScrLk  →  (or ↓)            next port
+#   ScrLk ScrLk  ←  (or ↑)            previous port
+#   ScrLk ScrLk  N                    jump straight to PC N
+#   ScrLk ScrLk  S                    toggle auto-cycling
+#   ScrLk ScrLk  I nnn Enter          auto-cycle interval, 5-999 s
+#   ScrLk ScrLk  B 1/0                buzzer on / off
+#   ScrLk ScrLk  F L A S H Enter      reset hotkey settings to defaults
+#
+# Every entity is write-only: nothing reads back which port the KVM is on, so
+# states are what was last commanded, not ground truth.
+
+button:
+  - platform: template
+    name: "Next Port"
+    icon: mdi:arrow-right-bold-box
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [SCROLL_LOCK, SCROLL_LOCK, RIGHT]
+
+  - platform: template
+    name: "Previous Port"
+    icon: mdi:arrow-left-bold-box
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [SCROLL_LOCK, SCROLL_LOCK, LEFT]
+
+  # One per PC. Adjust the count to the real number of ports.
+  - platform: template
+    name: "PC 1"
+    icon: mdi:monitor
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [SCROLL_LOCK, SCROLL_LOCK, 1]
+
+  - platform: template
+    name: "PC 2"
+    icon: mdi:monitor
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [SCROLL_LOCK, SCROLL_LOCK, 2]
+
+  - platform: template
+    name: "PC 3"
+    icon: mdi:monitor
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [SCROLL_LOCK, SCROLL_LOCK, 3]
+
+  - platform: template
+    name: "PC 4"
+    icon: mdi:monitor
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [SCROLL_LOCK, SCROLL_LOCK, 4]
+
+  - platform: template
+    name: "Toggle Auto-Cycle"
+    icon: mdi:autorenew
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [SCROLL_LOCK, SCROLL_LOCK, S]
+
+  - platform: template
+    name: "Reset Hotkey Settings"
+    icon: mdi:backup-restore
+    entity_category: config
+    # Wipes the KVM's hotkey configuration back to defaults.
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [SCROLL_LOCK, SCROLL_LOCK, F, L, A, S, H, ENTER]
+
+switch:
+  - platform: template
+    name: "Buzzer"
+    icon: mdi:volume-high
+    entity_category: config
+    optimistic: true
+    turn_on_action:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [SCROLL_LOCK, SCROLL_LOCK, B, 1]
+    turn_off_action:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [SCROLL_LOCK, SCROLL_LOCK, B, 0]
+
+number:
+  - platform: template
+    name: "Auto-Cycle Interval"
+    icon: mdi:timer-cog
+    entity_category: config
+    unit_of_measurement: s
+    min_value: 5
+    max_value: 999
+    step: 1
+    initial_value: 15
+    optimistic: true
+    update_interval: never
+    set_action:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          # ScrLk, ScrLk, I, <digits>, Enter -- the digit count varies, so this
+          # one sequence has to be built at runtime.
+          keys: !lambda |-
+            std::vector<uint32_t> keys = {0x47, 0x47, 0x0C};  // ScrLk, ScrLk, I
+            auto digits = usb_hid_keyboard::keys_from_string(to_string((int) x));
+            keys.insert(keys.end(), digits.begin(), digits.end());
+            keys.push_back(0x28);  // Enter
+            return keys;

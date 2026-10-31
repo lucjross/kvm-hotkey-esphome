@@ -23,9 +23,24 @@ enum USBDStringDescriptor : uint8_t {
   STR_DESC_SIZE = 5,
 };
 
-/// Longest queued sequence. Comfortably covers the longest KVM hotkey
+/// Longest queued sequence, in steps. Comfortably covers the longest KVM hotkey
 /// (ScrLk, ScrLk, I, n, n, n, Enter); anything past this is a runaway caller.
 static const size_t MAX_QUEUED_KEYS = 64;
+
+/// Keys one step can hold down at once; one per byte of a step.
+static const uint8_t MAX_CHORD_KEYS = 4;
+
+/// HID usage codes 0xE0..0xE7 are the modifiers. They are reported as bits of
+/// the modifier byte, never in the keycode array.
+static const uint8_t FIRST_MODIFIER_CODE = 0xE0;
+static const uint8_t LAST_MODIFIER_CODE = 0xE7;
+
+/// Pack up to four HID usage codes into one chord step, pressed in argument
+/// order and released in reverse. For building sequences in a lambda:
+/// `chord(0x53, 0x56)` is Num Lock held while minus is tapped.
+constexpr uint32_t chord(uint8_t first, uint8_t second = 0, uint8_t third = 0, uint8_t fourth = 0) {
+  return uint32_t(first) | uint32_t(second) << 8 | uint32_t(third) << 16 | uint32_t(fourth) << 24;
+}
 
 /// How long a queued sequence waits for the host to enumerate before being
 /// dropped. Without this, keys pressed while unplugged would replay at the
@@ -34,9 +49,12 @@ static const uint32_t MOUNT_WAIT_TIMEOUT_MS = 5000;
 
 /// Emulates a USB boot-protocol keyboard on the native USB peripheral.
 ///
-/// Keys are sent one at a time from loop(): press, hold for `key_hold`, release,
-/// then idle for `key_gap`. Nothing blocks, so WiFi and the API stay responsive
-/// while a sequence plays out.
+/// A sequence is a list of steps. Each step is one key, or a chord of up to four
+/// packed with chord(). Steps play from loop(): the step's keys go down one at a
+/// time `key_gap` apart, stay held for `key_hold`, then come up in reverse order
+/// `key_gap` apart, and the next step starts `key_gap` later. A single-key step
+/// is therefore just press, hold, release, gap. Nothing blocks, so WiFi and the
+/// API stay responsive while a sequence plays out.
 class UsbHidKeyboard : public Component {
  public:
   void setup() override;
@@ -53,21 +71,27 @@ class UsbHidKeyboard : public Component {
   void set_key_hold(uint32_t ms) { this->key_hold_ = ms; }
   void set_key_gap(uint32_t ms) { this->key_gap_ = ms; }
 
-  /// Queue `keys` (HID usage codes) to be typed in order.
-  void send_keys(const std::vector<uint8_t> &keys);
+  /// Queue `steps` (HID usage codes, or chords packed with chord()) to be
+  /// typed in order.
+  void send_keys(const std::vector<uint32_t> &steps);
 
   /// True once the host has enumerated and configured us.
   bool is_mounted();
 
  protected:
-  /// Whether the next report presses the pending key or releases it.
+  /// Whether the next report presses another key of the current step or
+  /// releases one.
   enum class Phase : uint8_t { PRESS, RELEASE };
 
-  bool send_report_(uint8_t keycode);
+  /// Report the first `count` keys of `step` as held, and nothing else.
+  bool send_report_(uint32_t step, uint8_t count);
+  void reset_queue_();
 
-  std::vector<uint8_t> queue_;
+  std::vector<uint32_t> queue_;
   size_t position_{0};
   Phase phase_{Phase::PRESS};
+  /// How many keys of the current step are down right now.
+  uint8_t held_{0};
   /// millis() before which loop() must not send the next report.
   uint32_t next_at_{0};
   /// When the current queue was enqueued, for MOUNT_WAIT_TIMEOUT_MS.
@@ -113,11 +137,11 @@ class UsbHidKeyboard : public Component {
 /// Map printable ASCII to HID usage codes, for building sequences in a lambda.
 /// Unmapped characters are skipped. Letters are emitted unshifted, which is all
 /// hotkey parsing needs.
-std::vector<uint8_t> keys_from_string(const std::string &value);
+std::vector<uint32_t> keys_from_string(const std::string &value);
 
 template<typename... Ts> class SendKeysAction : public Action<Ts...>, public Parented<UsbHidKeyboard> {
  public:
-  TEMPLATABLE_VALUE(std::vector<uint8_t>, keys)
+  TEMPLATABLE_VALUE(std::vector<uint32_t>, keys)
 
   void play(const Ts &...x) override { this->parent_->send_keys(this->keys_.value(x...)); }
 };

@@ -1,0 +1,91 @@
+# Level1Techs KVMs (4-port models). Untested on real hardware -- written from
+# the official L1Techs hotkey list on forum.level1techs.com.
+#
+# The "leading code" is two taps of Left Ctrl by default (Right Ctrl or Scroll
+# Lock on request -- swap LEFT_CTRL below to match). After it, one command key:
+#
+#   Ctrl Ctrl  1-4                    jump straight to PC 1-4 (number row)
+#   Ctrl Ctrl  0                      back to the previously selected PC
+#   Ctrl Ctrl  F1                     auto scan
+#   Ctrl Ctrl  F5                     toggle audio following the selected port
+#   Ctrl Ctrl  F7                     toggle USB 3 following the selected port
+#   Ctrl Ctrl  Alt+G                  toggle beeping (Alt held while G is tapped)
+#
+# Every entity is write-only: states are what was last commanded.
+
+button:
+  # One per PC.
+  - platform: template
+    name: "PC 1"
+    icon: mdi:monitor
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [LEFT_CTRL, LEFT_CTRL, 1]
+
+  - platform: template
+    name: "PC 2"
+    icon: mdi:monitor
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [LEFT_CTRL, LEFT_CTRL, 2]
+
+  - platform: template
+    name: "PC 3"
+    icon: mdi:monitor
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [LEFT_CTRL, LEFT_CTRL, 3]
+
+  - platform: template
+    name: "PC 4"
+    icon: mdi:monitor
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [LEFT_CTRL, LEFT_CTRL, 4]
+
+  - platform: template
+    name: "Previous PC"
+    icon: mdi:swap-horizontal
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [LEFT_CTRL, LEFT_CTRL, 0]
+
+  - platform: template
+    name: "Start Auto Scan"
+    icon: mdi:autorenew
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [LEFT_CTRL, LEFT_CTRL, F1]
+
+  - platform: template
+    name: "Toggle Audio Follow"
+    icon: mdi:speaker
+    entity_category: config
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [LEFT_CTRL, LEFT_CTRL, F5]
+
+  - platform: template
+    name: "Toggle USB Follow"
+    icon: mdi:usb
+    entity_category: config
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [LEFT_CTRL, LEFT_CTRL, F7]
+
+  - platform: template
+    name: "Toggle Buzzer"
+    icon: mdi:volume-high
+    entity_category: config
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [LEFT_CTRL, LEFT_CTRL, LEFT_ALT+G]

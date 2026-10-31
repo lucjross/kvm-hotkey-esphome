@@ -88,12 +88,12 @@ void UsbHidKeyboard::dump_config() {
 
 bool UsbHidKeyboard::is_mounted() { return tud_mounted(); }
 
-void UsbHidKeyboard::send_keys(const std::vector<uint8_t> &keys) {
-  if (this->is_failed() || keys.empty()) {
+void UsbHidKeyboard::send_keys(const std::vector<uint32_t> &steps) {
+  if (this->is_failed() || steps.empty()) {
     return;
   }
-  if (this->queue_.size() - this->position_ + keys.size() > MAX_QUEUED_KEYS) {
-    ESP_LOGW(TAG, "Key queue full, dropping %zu keys", keys.size());
+  if (this->queue_.size() - this->position_ + steps.size() > MAX_QUEUED_KEYS) {
+    ESP_LOGW(TAG, "Key queue full, dropping %zu steps", steps.size());
     return;
   }
 
@@ -101,20 +101,43 @@ void UsbHidKeyboard::send_keys(const std::vector<uint8_t> &keys) {
   // succession both arrive, in order, instead of the second truncating the first.
   bool was_idle = this->position_ >= this->queue_.size();
   if (was_idle) {
-    this->queue_.clear();
-    this->position_ = 0;
-    this->phase_ = Phase::PRESS;
+    this->reset_queue_();
     this->next_at_ = millis();
     this->queued_at_ = millis();
   }
-  this->queue_.insert(this->queue_.end(), keys.begin(), keys.end());
+  this->queue_.insert(this->queue_.end(), steps.begin(), steps.end());
 }
 
-bool UsbHidKeyboard::send_report_(uint8_t keycode) {
+void UsbHidKeyboard::reset_queue_() {
+  this->queue_.clear();
+  this->position_ = 0;
+  this->phase_ = Phase::PRESS;
+  this->held_ = 0;
+}
+
+/// Number of keys in a step: its leading non-zero bytes.
+static uint8_t step_size(uint32_t step) {
+  uint8_t count = 0;
+  while (count < MAX_CHORD_KEYS && ((step >> (8 * count)) & 0xFF) != 0) {
+    count++;
+  }
+  return count;
+}
+
+bool UsbHidKeyboard::send_report_(uint32_t step, uint8_t count) {
+  uint8_t modifier = 0;
   uint8_t keycodes[6] = {};
-  keycodes[0] = keycode;
+  uint8_t used = 0;
+  for (uint8_t i = 0; i < count; i++) {
+    uint8_t code = (step >> (8 * i)) & 0xFF;
+    if (code >= FIRST_MODIFIER_CODE && code <= LAST_MODIFIER_CODE) {
+      modifier |= 1 << (code - FIRST_MODIFIER_CODE);
+    } else {
+      keycodes[used++] = code;
+    }
+  }
   // report_id 0: unprefixed reports, matching the boot-protocol descriptor.
-  return tud_hid_keyboard_report(0, 0, keycodes);
+  return tud_hid_keyboard_report(0, modifier, keycodes);
 }
 
 void UsbHidKeyboard::loop() {
@@ -131,45 +154,61 @@ void UsbHidKeyboard::loop() {
   if (!mounted || !tud_hid_ready()) {
     // Don't let keys typed while unplugged replay at the next plug-in.
     if (millis() - this->queued_at_ > MOUNT_WAIT_TIMEOUT_MS) {
-      ESP_LOGW(TAG, "USB host not ready, dropping %zu queued keys", this->queue_.size() - this->position_);
-      this->queue_.clear();
-      this->position_ = 0;
-      this->phase_ = Phase::PRESS;
+      ESP_LOGW(TAG, "USB host not ready, dropping %zu queued steps", this->queue_.size() - this->position_);
+      this->reset_queue_();
     }
     return;
   }
 
   uint32_t now = millis();
   if ((int32_t) (now - this->next_at_) < 0) {
-    return;  // still holding, or still in the inter-key gap
+    return;  // still holding, or still in a gap
   }
 
-  if (this->phase_ == Phase::PRESS) {
-    if (!this->send_report_(this->queue_[this->position_])) {
+  uint32_t step = this->queue_[this->position_];
+  uint8_t size = step_size(step);
+
+  if (size > 0 && this->phase_ == Phase::PRESS) {
+    if (!this->send_report_(step, this->held_ + 1)) {
       return;  // endpoint busy; retry next loop
     }
-    this->phase_ = Phase::RELEASE;
-    this->next_at_ = now + this->key_hold_;
+    this->held_++;
+    if (this->held_ < size) {
+      this->next_at_ = now + this->key_gap_;  // next key of the chord goes down
+    } else {
+      this->phase_ = Phase::RELEASE;
+      this->next_at_ = now + this->key_hold_;
+    }
     return;
   }
 
-  if (!this->send_report_(0)) {
-    return;
+  if (size > 0) {
+    // Release the most recently pressed key first, so "hold Num Lock, tap
+    // minus" lets go of minus while Num Lock is still down.
+    if (!this->send_report_(step, this->held_ - 1)) {
+      return;
+    }
+    this->held_--;
+    if (this->held_ > 0) {
+      this->next_at_ = now + this->key_gap_;
+      return;
+    }
   }
+  // A zero step (only reachable from a lambda) is skipped rather than stalling.
+
   this->phase_ = Phase::PRESS;
   this->position_++;
   this->next_at_ = now + this->key_gap_;
 
   if (this->position_ >= this->queue_.size()) {
-    this->queue_.clear();
-    this->position_ = 0;
+    this->reset_queue_();
   }
   // Refresh the watchdog so a long sequence isn't mistaken for a stalled host.
   this->queued_at_ = now;
 }
 
-std::vector<uint8_t> keys_from_string(const std::string &value) {
-  std::vector<uint8_t> keys;
+std::vector<uint32_t> keys_from_string(const std::string &value) {
+  std::vector<uint32_t> keys;
   keys.reserve(value.size());
   for (char c : value) {
     if (c >= 'a' && c <= 'z') {

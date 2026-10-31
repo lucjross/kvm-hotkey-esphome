@@ -81,6 +81,36 @@ KEY_CODES |= {
     "RETURN": KEY_CODES["ENTER"],
 }
 
+# Modifiers use their HID usage codes (0xE0..0xE7) too. They never go in the
+# report's keycode array: send_report_() maps them onto bits of the modifier
+# byte, which is the only place a boot-protocol host looks for them.
+MODIFIER_CODES: dict[str, int] = {
+    "LEFT_CTRL": 0xE0,
+    "LEFT_SHIFT": 0xE1,
+    "LEFT_ALT": 0xE2,
+    "LEFT_GUI": 0xE3,
+    "RIGHT_CTRL": 0xE4,
+    "RIGHT_SHIFT": 0xE5,
+    "RIGHT_ALT": 0xE6,
+    "RIGHT_GUI": 0xE7,
+}
+# Unsided names mean the left key, which is what a KVM manual saying "Ctrl"
+# almost always means. Spell RIGHT_CTRL etc. out when the side matters.
+MODIFIER_CODES |= {
+    "CTRL": MODIFIER_CODES["LEFT_CTRL"],
+    "SHIFT": MODIFIER_CODES["LEFT_SHIFT"],
+    "ALT": MODIFIER_CODES["LEFT_ALT"],
+    "GUI": MODIFIER_CODES["LEFT_GUI"],
+    "WIN": MODIFIER_CODES["LEFT_GUI"],
+    "CMD": MODIFIER_CODES["LEFT_GUI"],
+}
+KEY_CODES |= MODIFIER_CODES
+
+# A chord ("NUM_LOCK+MINUS") holds up to this many keys at once. Each step is
+# one uint32_t with a usage code per byte, in press order, so four is the cap.
+MAX_CHORD_KEYS = 4
+CHORD_SEPARATOR = "+"
+
 
 def validate_key(value) -> int:
     """Accept a key name (SCROLL_LOCK) or a single character (A, 2)."""
@@ -97,13 +127,44 @@ def validate_key(value) -> int:
     return KEY_CODES[name]
 
 
+def validate_step(value) -> int:
+    """One step of a sequence: a single key, or a chord like ``ALT+G``.
+
+    A chord is pressed in the order written, held, and released in reverse --
+    what a person does for "hold Num Lock, press minus". The step is packed
+    into a uint32_t, one usage code per byte, first key in the low byte.
+    """
+    if not (isinstance(value, str) and CHORD_SEPARATOR in value):
+        return validate_key(value)
+    parts = [part.strip() for part in value.split(CHORD_SEPARATOR)]
+    if any(not part for part in parts):
+        raise cv.Invalid(f"Empty key in chord {value!r}")
+    if len(parts) > MAX_CHORD_KEYS:
+        raise cv.Invalid(
+            f"Chord {value!r} has {len(parts)} keys; at most {MAX_CHORD_KEYS} "
+            "can be held at once"
+        )
+    codes = [validate_key(part) for part in parts]
+    if len(set(codes)) != len(codes):
+        raise cv.Invalid(f"Chord {value!r} names the same key twice")
+    packed = 0
+    for shift, code in enumerate(codes):
+        packed |= code << (8 * shift)
+    return packed
+
+
 def validate_keys(value) -> list[int]:
-    # A bare string that isn't itself a key name is a convenience for typing a
-    # run of characters, e.g. keys: FLASH -> F, L, A, S, H. A string that *is* a
-    # key name stays one key, so `keys: SCROLL_LOCK` does the obvious thing.
-    if isinstance(value, str) and value.upper() not in KEY_CODES:
+    # A bare string that isn't itself a key name or a chord is a convenience
+    # for typing a run of characters, e.g. keys: FLASH -> F, L, A, S, H. A
+    # string that *is* a key name stays one key, so `keys: SCROLL_LOCK` does
+    # the obvious thing, and `keys: CTRL+F12` is one chord.
+    if (
+        isinstance(value, str)
+        and value.upper() not in KEY_CODES
+        and CHORD_SEPARATOR not in value
+    ):
         value = list(value)
-    return cv.ensure_list(validate_key)(value)
+    return cv.ensure_list(validate_step)(value)
 
 
 CONFIG_SCHEMA = cv.All(
@@ -196,7 +257,7 @@ async def send_keys_action_to_code(config, action_id, template_arg, args):
     var = cg.new_Pvariable(action_id, template_arg)
     await cg.register_parented(var, config[CONF_ID])
     templ = await cg.templatable(
-        config[CONF_KEYS], args, cg.std_vector.template(cg.uint8)
+        config[CONF_KEYS], args, cg.std_vector.template(cg.uint32)
     )
     cg.add(var.set_keys(templ))
     return var

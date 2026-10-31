@@ -1,0 +1,109 @@
+# ATEN CS1924M (4-port). Untested on real hardware -- written from the CS1924M
+# user manual. Other ATEN CS-series KVMs share most of this; check the port ID
+# format in yours, since multi-bank models use two-digit IDs.
+#
+# Port switching is two taps of Scroll Lock, then a command (nothing held):
+#
+#   ScrLk ScrLk  N Enter              jump straight to PC N (1-4)
+#   ScrLk ScrLk  Enter                next port (4 wraps to 1)
+#   ScrLk ScrLk  A Enter              auto scan, 5 s
+#   ScrLk ScrLk  A nn Enter           auto scan, nn seconds (1-99)
+#
+# Settings go through Hotkey Setting Mode (HSM), which is a held chord: hold
+# Num Lock, tap minus (released within half a second), release Num Lock.
+#
+#   HSM  B                            toggle the buzzer
+#
+# Auto scan suspends normal keyboard and mouse input until Esc or Space.
+# Every entity is write-only: states are what was last commanded.
+
+button:
+  - platform: template
+    name: "Next Port"
+    icon: mdi:arrow-right-bold-box
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [SCROLL_LOCK, SCROLL_LOCK, ENTER]
+
+  # One per PC.
+  - platform: template
+    name: "PC 1"
+    icon: mdi:monitor
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [SCROLL_LOCK, SCROLL_LOCK, 1, ENTER]
+
+  - platform: template
+    name: "PC 2"
+    icon: mdi:monitor
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [SCROLL_LOCK, SCROLL_LOCK, 2, ENTER]
+
+  - platform: template
+    name: "PC 3"
+    icon: mdi:monitor
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [SCROLL_LOCK, SCROLL_LOCK, 3, ENTER]
+
+  - platform: template
+    name: "PC 4"
+    icon: mdi:monitor
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [SCROLL_LOCK, SCROLL_LOCK, 4, ENTER]
+
+  - platform: template
+    name: "Start Auto Scan"
+    icon: mdi:autorenew
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [SCROLL_LOCK, SCROLL_LOCK, A, ENTER]
+
+  - platform: template
+    name: "Stop Auto Scan"
+    icon: mdi:stop-circle-outline
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: [ESCAPE]
+
+  - platform: template
+    name: "Toggle Buzzer"
+    icon: mdi:volume-high
+    entity_category: config
+    on_press:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          # Num Lock is held while minus is tapped, then B.
+          keys: [NUM_LOCK+MINUS, B]
+
+number:
+  - platform: template
+    name: "Auto Scan Interval"
+    icon: mdi:timer-cog
+    entity_category: config
+    unit_of_measurement: s
+    min_value: 1
+    max_value: 99
+    step: 1
+    initial_value: 5
+    optimistic: true
+    update_interval: never
+    # Setting this also starts scanning; the KVM has no separate interval setting.
+    set_action:
+      - usb_hid_keyboard.send_keys:
+          id: kbd
+          keys: !lambda |-
+            std::vector<uint32_t> keys = {0x47, 0x47, 0x04};  // ScrLk, ScrLk, A
+            auto digits = usb_hid_keyboard::keys_from_string(to_string((int) x));
+            keys.insert(keys.end(), digits.begin(), digits.end());
+            keys.push_back(0x28);  // Enter
+            return keys;
