@@ -199,3 +199,7 @@ and trigger entities from Home Assistant. Each hotkey should appear as its
 expected run of key-down events. `evtest` does not grab the device, so the
 keystrokes *also* reach whatever window has focus — put focus in a scratch editor
 first, or the board will type into your terminal and toggle Scroll Lock.
+
+## License
+
+[MIT](LICENSE)
